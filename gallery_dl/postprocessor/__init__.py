@@ -15,6 +15,7 @@ modules = {
     "directory",
     "exec",
     "hash",
+    "komga",
     "metadata",
     "mtime",
     "python",

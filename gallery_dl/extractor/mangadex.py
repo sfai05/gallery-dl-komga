@@ -85,24 +85,39 @@ class MangadexExtractor(Extractor):
             rel[item["type"]].append(item)
         mattr = manga["attributes"]
 
+        alt_titles = [next(iter(t.values())) for t in mattr.get("altTitles") or ()]
+
+        genres = []
+        tags = []
+        for t in mattr.get("tags") or ():
+            attrs = t["attributes"]
+            name = attrs["name"].get("en") or next(iter(attrs["name"].values()), "")
+            if not name:
+                continue
+            if attrs.get("group") == "genre":
+                genres.append(name)
+            else:
+                tags.append(name)
+
         return {
             "manga" : (mattr["title"].get("en") or
                        next(iter(mattr["title"].values()), "")),
-            "manga_id": manga["id"],
-            "manga_titles": [t.popitem()[1]
-                             for t in mattr.get("altTitles") or ()],
+            "manga_id"    : manga["id"],
+            "manga_alt"   : alt_titles,
+            "manga_titles": alt_titles,
             "manga_date"  : self.parse_datetime_iso(mattr.get("createdAt")),
             "description" : (mattr["description"].get("en") or
                              next(iter(mattr["description"].values()), "")),
-            "demographic": mattr.get("publicationDemographic"),
-            "origin": mattr.get("originalLanguage"),
-            "status": mattr.get("status"),
-            "year"  : mattr.get("year"),
-            "rating": mattr.get("contentRating"),
-            "links" : mattr.get("links"),
-            "tags"  : [t["attributes"]["name"]["en"] for t in mattr["tags"]],
-            "artist": [a["attributes"]["name"] for a in rel["artist"]],
-            "author": [a["attributes"]["name"] for a in rel["author"]],
+            "demographic" : mattr.get("publicationDemographic"),
+            "origin"      : mattr.get("originalLanguage"),
+            "status"      : mattr.get("status"),
+            "year"        : mattr.get("year"),
+            "rating"      : mattr.get("contentRating"),
+            "links"       : mattr.get("links"),
+            "genres"      : genres,
+            "tags"        : tags,
+            "artist"      : [a["attributes"]["name"] for a in rel["artist"]],
+            "author"      : [a["attributes"]["name"] for a in rel["author"]],
         }
 
 

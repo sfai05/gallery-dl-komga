@@ -17,6 +17,73 @@ class Hentai2readBase():
     category = "hentai2read"
     root = "https://hentai2read.com"
 
+    def _extract_info(self, page):
+        block = text.extr(page, 'class="list list-simple-mini">', '</ul>')
+
+        manga_alt_raw = text.extr(block, '<li class="text-muted">', '<')
+        manga_alt = []
+        if manga_alt_raw:
+            alt = text.unescape(manga_alt_raw.strip())
+            if alt and alt != '-':
+                manga_alt = [alt]
+
+        def _field(label):
+            li = text.extr(block, '<b>{}</b>'.format(label), '</li>')
+            return text.remove_html(li).strip()
+
+        def _taglist(label):
+            li_block = text.extr(block, '<b>{}</b>'.format(label), '</li>')
+            return [
+                t.strip()
+                for t in text.re(
+                    r'class="tagButton"[^>]*>([^<]+)</a>'
+                ).findall(li_block)
+                if t.strip() and t.strip() != '-'
+            ]
+
+        status = _field('Status')
+        if status == '-':
+            status = ""
+
+        year_raw = _field('Release Year')
+        year = text.parse_int(year_raw) if year_raw and year_raw != '-' else None
+
+        page_info = ' '.join(_field('Page').split())
+        if page_info == '-':
+            page_info = ""
+
+        author = _field('Author')
+        if author == '-':
+            author = ""
+
+        artist = _field('Artist')
+        if artist == '-':
+            artist = ""
+
+        # Category = broad genres (Adult, Oneshot, Big Breasts, …)
+        # Content  = specific content tags (Ahegao, Creampie, …)
+        genres = _taglist('Category')
+        tags   = _taglist('Content')
+
+        storyline = text.extr(block, '<b>Storyline</b>', '</li>')
+        description = text.unescape(text.remove_html(storyline)).strip()
+        if description in ('Nothing yet!', '-', ''):
+            description = ""
+
+        if page_info:
+            description = (description + "\n\n" + page_info if description else page_info)
+
+        return {
+            "manga_alt"  : manga_alt,
+            "author"     : author,
+            "artist"     : artist,
+            "genres"     : genres,
+            "tags"       : tags,
+            "description": description,
+            "status"     : status,
+            "year"       : year,
+        }
+
 
 class Hentai2readChapterExtractor(Hentai2readBase, ChapterExtractor):
     """Extractor for a single manga chapter from hentai2read.com"""
@@ -25,32 +92,54 @@ class Hentai2readChapterExtractor(Hentai2readBase, ChapterExtractor):
     example = "https://hentai2read.com/TITLE/1/"
 
     def metadata(self, page):
-        title, pos = text.extract(page, "<title>", "</title>")
+        page_title, pos = text.extract(page, "<title>", "</title>")
         manga_id, pos = text.extract(page, 'data-mid="', '"', pos)
         chapter_id, pos = text.extract(page, 'data-cid="', '"', pos)
         chapter, sep, minor = self.groups[1].partition(".")
 
         match = text.re(
             r"Reading (.+) \(([^)]+)\) Hentai(?: by (.*))? - "
-            r"([^:]+): (.+) . Page 1 ").match(title)
+            r"([^:]+): (.+) . Page 1 ").match(page_title)
         if match:
-            manga, type, author, _, title = match.groups()
+            manga, mtype, author, _, title = match.groups()
         else:
             self.log.warning("Failed to extract 'manga', 'type', 'author', "
                              "and 'title' metadata")
-            manga = type = author = title = ""
+            manga = mtype = author = title = ""
+
+        try:
+            manga_path = self.groups[0].rsplit("/", 1)[0]
+            manga_page = self.request(self.root + manga_path + "/").text
+            info = self._extract_info(manga_page)
+        except Exception:
+            info = {
+                "manga_alt"  : [],
+                "author"     : "",
+                "artist"     : "",
+                "genres"     : [],
+                "tags"       : [],
+                "description": "",
+                "status"     : "",
+                "year"       : None,
+            }
 
         return {
-            "manga": manga,
-            "manga_id": text.parse_int(manga_id),
-            "chapter": text.parse_int(chapter),
+            "manga"        : manga,
+            "manga_id"     : text.parse_int(manga_id),
+            "manga_alt"    : info["manga_alt"],
+            "chapter"      : text.parse_int(chapter),
             "chapter_minor": sep + minor,
-            "chapter_id": text.parse_int(chapter_id),
-            "type": type,
-            "author": author,
-            "title": title,
-            "lang": "en",
-            "language": "English",
+            "chapter_id"   : text.parse_int(chapter_id),
+            "type"         : mtype,
+            "author"       : author or info["author"],
+            "artist"       : info["artist"],
+            "title"        : title,
+            "genres"       : info["genres"],
+            "tags"         : info["tags"],
+            "description"  : info["description"],
+            "status"       : info["status"],
+            "lang"         : "en",
+            "language"     : "English",
         }
 
     def images(self, page):
@@ -78,6 +167,8 @@ class Hentai2readMangaExtractor(Hentai2readBase, MangaExtractor):
         manga_id = text.parse_int(text.extract(
             page, 'data-mid="', '"', pos)[0])
 
+        info = self._extract_info(page)
+
         while True:
             chapter_id, pos = text.extract(page, ' data-cid="', '"', pos)
             if not chapter_id:
@@ -90,13 +181,20 @@ class Hentai2readMangaExtractor(Hentai2readBase, MangaExtractor):
             chapter, sep, minor = chapter.partition(".")
 
             results.append((url, {
-                "manga": manga,
-                "manga_id": manga_id,
-                "chapter": text.parse_int(chapter),
+                "manga"        : manga,
+                "manga_id"     : manga_id,
+                "manga_alt"    : info["manga_alt"],
+                "chapter"      : text.parse_int(chapter),
                 "chapter_minor": sep + minor,
-                "chapter_id": text.parse_int(chapter_id),
-                "type": mtype,
-                "title": title,
-                "lang": "en",
-                "language": "English",
+                "chapter_id"   : text.parse_int(chapter_id),
+                "type"         : mtype,
+                "author"       : info["author"],
+                "artist"       : info["artist"],
+                "title"        : title,
+                "genres"       : info["genres"],
+                "tags"         : info["tags"],
+                "description"  : info["description"],
+                "status"       : info["status"],
+                "lang"         : "en",
+                "language"     : "English",
             }))
