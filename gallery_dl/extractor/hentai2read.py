@@ -60,10 +60,9 @@ class Hentai2readBase():
         if artist == '-':
             artist = ""
 
-        # Category = broad genres (Adult, Oneshot, Big Breasts, …)
-        # Content  = specific content tags (Ahegao, Creampie, …)
-        genres = _taglist('Category')
-        tags   = _taglist('Content')
+        # Category (broad: Adult, Oneshot, Big Breasts, …) + Content (Ahegao, Creampie, …)
+        # merged into a single tags list (Komga writes everything into <Genre>)
+        tags = _taglist('Category') + _taglist('Content')
 
         storyline = text.extr(block, '<b>Storyline</b>', '</li>')
         description = text.unescape(text.remove_html(storyline)).strip()
@@ -77,7 +76,6 @@ class Hentai2readBase():
             "manga_alt"  : manga_alt,
             "author"     : author,
             "artist"     : artist,
-            "genres"     : genres,
             "tags"       : tags,
             "description": description,
             "status"     : status,
@@ -116,7 +114,6 @@ class Hentai2readChapterExtractor(Hentai2readBase, ChapterExtractor):
                 "manga_alt"  : [],
                 "author"     : "",
                 "artist"     : "",
-                "genres"     : [],
                 "tags"       : [],
                 "description": "",
                 "status"     : "",
@@ -134,7 +131,6 @@ class Hentai2readChapterExtractor(Hentai2readBase, ChapterExtractor):
             "author"       : author or info["author"],
             "artist"       : info["artist"],
             "title"        : title,
-            "genres"       : info["genres"],
             "tags"         : info["tags"],
             "description"  : info["description"],
             "status"       : info["status"],
@@ -191,7 +187,6 @@ class Hentai2readMangaExtractor(Hentai2readBase, MangaExtractor):
                 "author"       : info["author"],
                 "artist"       : info["artist"],
                 "title"        : title,
-                "genres"       : info["genres"],
                 "tags"         : info["tags"],
                 "description"  : info["description"],
                 "status"       : info["status"],

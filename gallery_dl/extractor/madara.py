@@ -83,11 +83,10 @@ class MadaraExtractor(Extractor):
             if cover and not cover.startswith("data:"):
                 break
 
-        genres = re.findall(
+        tags = re.findall(
             r'<a[^>]+>([^<]+)</a>',
             text.extr(page, 'class="genres-content">', "</div>"),
-        )
-        tags = re.findall(
+        ) + re.findall(
             r'<a[^>]+>([^<]+)</a>',
             text.extr(page, 'class="tags-content">', "</div>"),
         )
@@ -103,7 +102,6 @@ class MadaraExtractor(Extractor):
             "description": description or None,
             "status"     : status or None,
             "cover"      : cover or None,
-            "genres"     : genres,
             "tags"       : tags,
             "lang"       : "en",
         }

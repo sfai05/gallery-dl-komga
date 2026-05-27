@@ -87,16 +87,11 @@ class MangadexExtractor(Extractor):
 
         alt_titles = [next(iter(t.values())) for t in mattr.get("altTitles") or ()]
 
-        genres = []
         tags = []
         for t in mattr.get("tags") or ():
             attrs = t["attributes"]
             name = attrs["name"].get("en") or next(iter(attrs["name"].values()), "")
-            if not name:
-                continue
-            if attrs.get("group") == "genre":
-                genres.append(name)
-            else:
+            if name:
                 tags.append(name)
 
         return {
@@ -114,7 +109,6 @@ class MangadexExtractor(Extractor):
             "year"        : mattr.get("year"),
             "rating"      : mattr.get("contentRating"),
             "links"       : mattr.get("links"),
-            "genres"      : genres,
             "tags"        : tags,
             "artist"      : [a["attributes"]["name"] for a in rel["artist"]],
             "author"      : [a["attributes"]["name"] for a in rel["author"]],

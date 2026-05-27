@@ -144,13 +144,9 @@ class KomgaPP(PostProcessor):
             else category.title()
         tag("Publisher", publisher)
 
-        genres = meta.get("genres") or []
-        if genres:
-            tag("Genre", ", ".join(genres))
-
-        tags = meta.get("tags") or []
-        if tags:
-            tag("Tags", ", ".join(tags))
+        all_tags = (meta.get("tags") or []) + (meta.get("genres") or [])
+        if all_tags:
+            tag("Genre", ", ".join(all_tags))
 
         chapter_id = meta.get("chapter_id")
         if chapter_id and category == "mangadex":
@@ -226,7 +222,7 @@ class KomgaPP(PostProcessor):
             m["author"] = ", ".join(authors)
 
         if meta.get("description"):
-            m["description_text"] = meta["description"]
+            m["description"] = meta["description"]
         if meta.get("year"):
             m["year"] = meta["year"]
         if meta.get("status"):
@@ -234,13 +230,9 @@ class KomgaPP(PostProcessor):
         if meta.get("demographic"):
             m["publication_demographic"] = meta["demographic"]
 
-        genres = meta.get("genres") or []
-        if genres:
-            m["genres"] = genres
-
-        tags = meta.get("tags") or []
-        if tags:
-            m["tags"] = tags
+        all_tags = (meta.get("tags") or []) + (meta.get("genres") or [])
+        if all_tags:
+            m["genres"] = all_tags
 
         content = json.dumps({"metadata": m}, ensure_ascii=False, indent=2)
         target = os.path.join(series_dir, "series.json")
