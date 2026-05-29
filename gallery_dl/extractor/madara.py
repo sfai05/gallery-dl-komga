@@ -10,12 +10,25 @@
 
 from .common import Extractor, Message
 from .. import text
+import datetime
 import re
 
 # Chapter number from URL slug, e.g. "chapter-12", "chapter-12-5"
 _CHAPTER_RE = re.compile(r"chapter-(\d+)(?:-(\d+))?", re.I)
 # Lazy-loaded image attributes in priority order
 _IMG_ATTRS = ("data-src", "data-lazy-src", "data-cfsrc", "src")
+
+
+def _parse_date(value):
+    """Parse a Madara chapter-release-date ("May 24, 2026") to an ISO datetime
+    string, or None for relative dates ("13 hours ago")."""
+    value = value.strip()
+    for fmt in ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d"):
+        try:
+            return datetime.datetime.strptime(value, fmt)
+        except ValueError:
+            pass
+    return None
 
 
 def _img_url(tag):
@@ -54,9 +67,14 @@ class MadaraExtractor(Extractor):
     def _manga_info(self, manga_url):
         page = self.request(manga_url).text
 
-        title = text.remove_html(
+        title_block = (
             text.extr(page, 'class="post-title">', "</div>") or
             text.extr(page, 'id="manga-title">', "</h1>")
+        )
+        # prefer the <h1>; a sibling "HOT"/"NEW" badge span would leak into the title
+        heading = re.search(r"<h[1-3][^>]*>(.*?)</h[1-3]>", title_block, re.S)
+        title = text.remove_html(
+            heading.group(1) if heading else title_block
         ).strip()
 
         author = text.remove_html(
@@ -107,16 +125,19 @@ class MadaraExtractor(Extractor):
         }
 
     def _chapter_list(self, manga_url):
-        """Return list of (chapter_url, chapter_title) newest-first."""
+        """Return list of (chapter_url, chapter_title, date) newest-first."""
         manga_url_clean = manga_url.rstrip("/") + "/"
 
         if not self.use_new_chapter_endpoint:
             page = self.request(manga_url_clean).text
             chapters_html = text.extr(page, 'class="main version-chap', "</ul>")
-            if chapters_html:
-                return self._parse_chapter_list(chapters_html)
+            chapters = self._parse_chapter_list(chapters_html) if chapters_html \
+                else []
+            if chapters:
+                return chapters
 
-        # POST to /ajax/chapters/ (new endpoint)
+        # POST to /ajax/chapters/ (the list is often loaded lazily, so the
+        # inline container above is empty and we fall back to this endpoint)
         try:
             response = self.request(
                 manga_url_clean + "ajax/chapters/",
@@ -132,9 +153,26 @@ class MadaraExtractor(Extractor):
         for li in text.extract_iter(html, '<li class="wp-manga-chapter', "</li>"):
             url = text.extr(li, 'href="', '"')
             title = text.remove_html(text.extr(li, ">", "</a>")).strip()
+            date = _parse_date(text.remove_html(
+                text.extr(li, 'chapter-release-date', "</span>")).lstrip('">'))
             if url:
-                chapters.append((url, title))
+                chapters.append((url, title, date))
         return chapters
+
+    _chapter_info_cache = {}
+
+    def _chapter_info(self, manga_url, chapter_slug):
+        """Return (chapter_url, date) for a chapter, using a per-manga cache so
+        a single run resolves the chapter list (with dates) only once."""
+        key = manga_url.rstrip("/")
+        cache = MadaraExtractor._chapter_info_cache
+        if key not in cache:
+            mapping = {}
+            for url, title, date in self._chapter_list(manga_url):
+                slug = url.rstrip("/").rsplit("/", 1)[-1]
+                mapping[slug] = (url, date)
+            cache[key] = mapping
+        return cache[key].get(chapter_slug, (None, None))
 
     def _chapter_images(self, chapter_url):
         """Return ordered list of image URLs for a chapter page."""
@@ -164,17 +202,20 @@ class MadaraChapterExtractor(MadaraExtractor):
         manga_url = "{}/manga/{}/".format(self.root, self._manga_slug)
         manga_info = self._manga_info(manga_url)
         chapter, minor = _parse_chapter_slug(self._chapter_slug)
+        chapter_url, date = self._chapter_info(manga_url, self._chapter_slug)
 
         data = {
             **manga_info,
             "chapter"      : chapter,
             "chapter_minor": minor,
             "chapter_id"   : self._chapter_slug,
+            "chapter_url"  : chapter_url or self.url,
+            "date"         : date,
             "volume"       : 0,
         }
 
         images = self._chapter_images(self.url)
-        yield Message.Directory, data
+        yield Message.Directory, "", data
         for i, url in enumerate(images, 1):
             image_data = text.nameext_from_url(url, {**data, "page": i})
             yield Message.Url, url, image_data
@@ -192,7 +233,7 @@ class MadaraMangaExtractor(MadaraExtractor):
         manga_info = self._manga_info(manga_url)
         chapters = self._chapter_list(manga_url)
 
-        for chapter_url, chapter_title in reversed(chapters):
+        for chapter_url, chapter_title, date in reversed(chapters):
             slug = chapter_url.rstrip("/").rsplit("/", 1)[-1]
             chapter, minor = _parse_chapter_slug(slug)
             data = {
@@ -201,6 +242,8 @@ class MadaraMangaExtractor(MadaraExtractor):
                 "chapter_minor": minor,
                 "chapter_id"   : slug,
                 "chapter_title": chapter_title,
+                "chapter_url"  : chapter_url,
+                "date"         : date,
                 "volume"       : 0,
                 "_extractor"   : self.chapter_extractor,
             }

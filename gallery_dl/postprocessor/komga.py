@@ -148,9 +148,12 @@ class KomgaPP(PostProcessor):
         if all_tags:
             tag("Genre", ", ".join(all_tags))
 
-        chapter_id = meta.get("chapter_id")
-        if chapter_id and category == "mangadex":
-            tag("Web", "https://mangadex.org/chapter/{}".format(chapter_id))
+        chapter_url = meta.get("chapter_url")
+        if chapter_url:
+            tag("Web", chapter_url)
+        elif meta.get("chapter_id") and category == "mangadex":
+            tag("Web", "https://mangadex.org/chapter/{}".format(
+                meta.get("chapter_id")))
 
         count = meta.get("count")
         if count:

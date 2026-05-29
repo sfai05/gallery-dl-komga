@@ -16,7 +16,6 @@ BASE_PATTERN = r"(?:https?://)?(?:www\.)?manhuaplus\.com"
 class ManhuaplusExtractor(MadaraExtractor):
     category = "manhuaplus"
     root = "https://manhuaplus.com"
-    page_img_container = "read-container"
 
 
 class ManhuaplusChapterExtractor(ManhuaplusExtractor, MadaraChapterExtractor):
