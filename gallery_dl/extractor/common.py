@@ -19,7 +19,9 @@ import random
 import getpass
 import logging
 import requests
+import tempfile
 import threading
+from urllib.parse import urlparse
 from xml.etree import ElementTree
 from requests.adapters import HTTPAdapter
 from .message import Message
@@ -51,6 +53,7 @@ class Extractor():
     useragent = util.USERAGENT_FIREFOX
     geobypass = None
     request_interval = 0.0
+    needs_flaresolverr = False
     request_interval_min = 0.0
     request_interval_429 = 60.0
     request_timestamp = 0.0
@@ -147,6 +150,10 @@ class Extractor():
     def request(self, url, method="GET", session=None, fatal=True,
                 retries=None, retry_codes=None, expected=(), interval=True,
                 encoding=None, notfound=None, **kwargs):
+        use_fs = (self._flaresolverr and method == "GET" and
+                  "data" not in kwargs)
+        if use_fs:
+            self._flaresolverr_load_cookies(url)
         if session is None:
             session = self.session
         if retries is None:
@@ -222,6 +229,9 @@ class Extractor():
 
                 challenge = util.detect_challenge(response)
                 if challenge is not None:
+                    if use_fs:
+                        return self._request_flaresolverr(
+                            url, fatal=fatal, notfound=notfound)
                     self.log.warning(challenge)
 
                 if code == 429 and self._handle_429(response):
@@ -263,6 +273,103 @@ class Extractor():
             exc = exception.ChallengeError(challenge, response)
         self.status |= exc.code
         raise exc
+
+    FLARESOLVERR_COOKIE_TTL = 1200
+
+    def _flaresolverr_cookie_path(self, url):
+        host = urlparse(url).hostname or "unknown"
+        cache_dir = os.path.join(tempfile.gettempdir(), "gdl_fs_cookies")
+        os.makedirs(cache_dir, exist_ok=True)
+        return os.path.join(cache_dir, host + ".pkl")
+
+    def _flaresolverr_load_cookies(self, url):
+        path = self._flaresolverr_cookie_path(url)
+        if not os.path.isfile(path):
+            return False
+        if time.time() - os.path.getmtime(path) > self.FLARESOLVERR_COOKIE_TTL:
+            return False
+        try:
+            with open(path, "rb") as f:
+                payload = pickle.load(f)
+        except Exception:
+            return False
+        ua = payload.get("user_agent")
+        if ua:
+            self.session.headers["User-Agent"] = ua
+        for c in payload.get("cookies", []):
+            self.session.cookies.set(**c)
+        return True
+
+    def _flaresolverr_save_cookies(self, url, cookies_list, user_agent=None):
+        if not cookies_list:
+            return
+        path = self._flaresolverr_cookie_path(url)
+        slim = []
+        for c in cookies_list:
+            entry = {"name": c.get("name"), "value": c.get("value")}
+            if c.get("domain"):
+                entry["domain"] = c["domain"]
+            if c.get("path"):
+                entry["path"] = c["path"]
+            slim.append(entry)
+        payload = {"cookies": slim, "user_agent": user_agent}
+        try:
+            with open(path, "wb") as f:
+                pickle.dump(payload, f)
+        except Exception as exc:
+            self.log.debug("Failed to save FlareSolverr cookies: %s", exc)
+
+    def _request_flaresolverr(self, url, fatal=True, notfound=None):
+        endpoint = self._flaresolverr.rstrip("/")
+        if not endpoint.endswith("/v1"):
+            endpoint += "/v1"
+        payload = {"cmd": "request.get", "url": url, "maxTimeout": 60000}
+        try:
+            fs = requests.post(
+                endpoint,
+                json=payload,
+                timeout=90,
+                proxies=self._proxies,
+                verify=self._verify,
+            ).json()
+        except Exception as exc:
+            if fatal:
+                raise exception.HttpError(
+                    "FlareSolverr request failed: {}".format(exc), None)
+            self.log.warning("FlareSolverr unreachable: %s", exc)
+            return util.NullResponse(url, str(exc))
+
+        if fs.get("status") != "ok":
+            msg = fs.get("message", "FlareSolverr error")
+            if fatal:
+                raise exception.HttpError(msg, None)
+            self.log.warning("%s", msg)
+            return util.NullResponse(url, msg)
+
+        sol = fs.get("solution") or {}
+        code = sol.get("status", 0)
+        if notfound is not None and code == 404:
+            if notfound is True:
+                notfound = self.__class__.subcategory
+            self.status |= exception.NotFoundError.code
+            raise exception.NotFoundError(notfound)
+
+        response = requests.Response()
+        response.status_code = code
+        response.url = sol.get("url", url)
+        response.encoding = "utf-8"
+        response._content = (sol.get("response") or "").encode("utf-8")
+        for h in sol.get("headers") or []:
+            response.headers[h.get("name", "")] = h.get("value", "")
+        cookies = sol.get("cookies") or []
+        ua = sol.get("userAgent")
+        if ua:
+            self.session.headers["User-Agent"] = ua
+        for c in cookies:
+            self.session.cookies.set(c.get("name"), c.get("value"),
+                                     domain=c.get("domain"))
+        self._flaresolverr_save_cookies(sol.get("url", url), cookies, ua)
+        return response
 
     def request_location(self, url, **kwargs):
         kwargs.setdefault("method", "HEAD")
@@ -476,6 +583,7 @@ class Extractor():
         self._timeout = self.config("timeout", 30)
         self._verify = self.config("verify", True)
         self._proxies = util.build_proxy_map(self.config("proxy"), self.log)
+        self._flaresolverr = self.config("flaresolverr")
 
         if self._retries < 0:
             self._retries = float("inf")
