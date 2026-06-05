@@ -237,18 +237,18 @@ class KomgaPP(PostProcessor):
         if all_tags:
             m["genres"] = all_tags
 
-        content = json.dumps({"metadata": m}, ensure_ascii=False, indent=2)
         target = os.path.join(series_dir, "series.json")
-        tmp = target + ".komga.tmp"
 
+        # Preserve any existing series.json — Komga's Auto-Match enriches it with
+        # MangaDex/AniList/Kitsu metadata and tracker_links that we would silently
+        # overwrite with our (minimal) extractor-derived content. The CBZ resume
+        # path runs this postprocessor on every download, so even a single extra
+        # chapter would wipe a fully-enriched series.json. Write only when missing.
         if os.path.isfile(target):
-            try:
-                with open(target, "r", encoding="utf-8") as f:
-                    if f.read() == content:
-                        return
-            except Exception:
-                pass
+            return
 
+        content = json.dumps({"metadata": m}, ensure_ascii=False, indent=2)
+        tmp = target + ".komga.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             f.write(content)
         os.replace(tmp, target)
