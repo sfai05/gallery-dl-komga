@@ -127,6 +127,7 @@ modules = [
     "lynxchan",
     "madara",
     "madokami",
+    "mangaclash",
     "mangadex",
     "mangafire",
     "mangafox",
@@ -140,6 +141,7 @@ modules = [
     "mangatown",
     "manhuaplus",
     "mangoxo",
+    "mgeko",
     "misskey",
     "mixdrop",
     "motherless",
@@ -217,6 +219,7 @@ modules = [
     "tiktok",
     "tmohentai",
     "toyhouse",
+    "tritinia",
     "tumblr",
     "tumblrgallery",
     "tungsten",
@@ -319,8 +322,30 @@ def _list_classes():
 
 
 def _modules_internal():
+    """Yield all extractor modules.
+
+    Augments the static `modules` list with any `.py` file present in this
+    package directory that wasn't explicitly listed. Dropping a new
+    `<name>.py` into `gallery_dl/extractor/` is enough to register it; the
+    static list above stays as the canonical (sorted) registration for the
+    upstream-shipped extractors.
+    """
+    import os
     globals_ = globals()
-    for module_name in modules:
+    seen = set(modules)
+    extra = []
+    try:
+        for fname in os.listdir(os.path.dirname(__file__)):
+            if (
+                fname.endswith(".py")
+                and fname != "__init__.py"
+                and fname[:-3] not in seen
+            ):
+                extra.append(fname[:-3])
+    except OSError:
+        pass
+    extra.sort()
+    for module_name in modules + extra:
         yield __import__(module_name, globals_, None, None, 1)
 
 
