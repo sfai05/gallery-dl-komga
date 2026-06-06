@@ -6,6 +6,7 @@
 # it under the terms of the GNU General Public License version 2 as
 # published by the Free Software Foundation.
 
+import os
 import sys
 import errno
 import logging
@@ -532,6 +533,9 @@ class DownloadJob(Job):
             return
         self.visited.add(url)
 
+        if self._komga_archive_skip(url, kwdict):
+            return
+
         if "child" in self.hooks:
             pathfmt = self.pathfmt
             pathfmt.kwdict = kwdict
@@ -616,6 +620,41 @@ class DownloadJob(Job):
             pathfmt.kwdict = kwdict
             for callback in self.hooks["child-after"]:
                 callback(pathfmt)
+
+    def _komga_archive_skip(self, url, kwdict):
+        if "chapter" not in kwdict:
+            return False
+        cls = kwdict.get("_extractor")
+        category = getattr(cls, "category", None) or self.extractor.category
+        if category == "mangadex":
+            return False
+        cache = getattr(self, "_komga_archive_cache", None)
+        if cache is None:
+            extr = self.extractor
+            archive_dir = extr._parentdir or extr.config("base-directory")
+            if archive_dir:
+                archive_dir = archive_dir.rstrip("/\\")
+            entries = set()
+            if archive_dir:
+                archive_path = os.path.join(archive_dir, ".komga-archive.txt")
+                if os.path.isfile(archive_path):
+                    with open(archive_path, "r", encoding="utf-8") as f:
+                        for line in f:
+                            s = line.strip()
+                            if s:
+                                entries.add(s)
+            self._komga_archive_cache = frozenset(entries)
+            cache = self._komga_archive_cache
+        raw = "{}{}".format(kwdict["chapter"], kwdict.get("chapter_minor", ""))
+        key = raw.strip()
+        for sep in (",", "-", "_", " "):
+            key = key.replace(sep, ".")
+        while ".." in key:
+            key = key.replace("..", ".")
+        key = key.strip(".")
+        if not key:
+            return False
+        return (category + " " + key) in cache
 
     def handle_finalize(self):
         if self.archive is not None:

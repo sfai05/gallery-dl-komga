@@ -9,6 +9,7 @@
 """Extractors for https://mgread.io/"""
 
 from .common import Extractor, Message
+from .madara import _extract_date_near
 from .. import text
 import re
 
@@ -61,12 +62,16 @@ class MgreadioExtractor(Extractor):
             except Exception:
                 break
             page_chapters = []
-            for m in href_re.finditer(page):
+            matches = list(href_re.finditer(page))
+            for idx, m in enumerate(matches):
                 chapter_url = m.group(1)
                 if chapter_url in seen:
                     continue
                 seen.add(chapter_url)
-                page_chapters.append((chapter_url, ""))
+                window_start = m.end()
+                window_end = matches[idx + 1].start() if idx + 1 < len(matches) else min(window_start + 600, len(page))
+                chapter_date = _extract_date_near(page[window_start:window_end])
+                page_chapters.append((chapter_url, "", chapter_date))
             if not page_chapters:
                 break
             chapters.extend(page_chapters)
@@ -115,6 +120,7 @@ class MgreadioChapterExtractor(MgreadioExtractor):
             "chapter_id"   : self._chapter_slug,
             "chapter_url"  : self.url,
             "volume"       : 0,
+            "date"         : None,
         }
         images = self._chapter_images(self.url)
         yield Message.Directory, "", data
@@ -146,7 +152,7 @@ class MgreadioMangaExtractor(MgreadioExtractor):
 
         chapters_sorted = sorted(chapters, key=_sort_key)
 
-        for chapter_url, chapter_title in chapters_sorted:
+        for chapter_url, chapter_title, chapter_date in chapters_sorted:
             slug = chapter_url.rstrip("/").rsplit("/", 1)[-1]
             match = _CHAPTER_RE.search(slug)
             chapter = int(match.group(1)) if match else 0
@@ -159,6 +165,7 @@ class MgreadioMangaExtractor(MgreadioExtractor):
                 "chapter_title": chapter_title,
                 "chapter_url"  : chapter_url,
                 "volume"       : 0,
+                "date"         : chapter_date,
                 "_extractor"   : MgreadioChapterExtractor,
             }
             yield Message.Queue, chapter_url, data

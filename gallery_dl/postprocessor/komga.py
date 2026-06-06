@@ -24,6 +24,7 @@ class KomgaPP(PostProcessor):
         self._write_comic_info = options.get("comic-info", True)
         self._write_series = options.get("series-json", True)
         self._dir_meta = {}
+        self._extractor = job.extractor
 
         job.register_hooks({"file": self._on_file}, options)
         job.hooks["finalize"].append(self._finalize)
@@ -40,21 +41,57 @@ class KomgaPP(PostProcessor):
             cbz = dirpath + "." + self._extension
             if not os.path.isfile(cbz):
                 continue
+            cbz_parent = os.path.dirname(cbz)
 
+            comic_info_ok = True
             if self._write_comic_info:
                 try:
                     self._inject_comic_info(cbz, meta)
                 except Exception as exc:
+                    comic_info_ok = False
                     self.log.warning("ComicInfo.xml injection failed for %s: %s", cbz, exc)
 
+            if comic_info_ok:
+                try:
+                    self._archive_chapter(cbz_parent, meta)
+                except Exception as exc:
+                    self.log.warning(
+                        "Failed to record chapter in .komga-archive.txt: %s",
+                        exc)
+
             if self._write_series:
-                parent = os.path.dirname(cbz)
-                if parent not in written_series:
+                if cbz_parent not in written_series:
                     try:
-                        self._write_series_json(parent, meta)
-                        written_series.add(parent)
+                        self._write_series_json(cbz_parent, meta)
+                        written_series.add(cbz_parent)
                     except Exception as exc:
-                        self.log.warning("series.json write failed in %s: %s", parent, exc)
+                        self.log.warning(
+                            "series.json write failed in %s: %s", cbz_parent, exc)
+
+    def _archive_chapter(self, base_dir, meta):
+        category = self._extractor.category
+        if category == "mangadex":
+            return
+        raw = "{}{}".format(meta["chapter"], meta["chapter_minor"])
+        key = raw.strip()
+        for sep in (",", "-", "_", " "):
+            key = key.replace(sep, ".")
+        while ".." in key:
+            key = key.replace("..", ".")
+        key = key.strip(".")
+        if not key:
+            return
+        line_entry = category + " " + key
+        archive_path = os.path.join(base_dir, ".komga-archive.txt")
+        if os.path.isfile(archive_path):
+            with open(archive_path, "r", encoding="utf-8") as f:
+                for line in f:
+                    if line.strip() == line_entry:
+                        return
+        with open(archive_path, "a", encoding="utf-8") as f:
+            f.write(line_entry + "\n")
+            f.flush()
+            os.fsync(f.fileno())
 
     def _inject_comic_info(self, cbz_path, meta):
         comic_info = self._build_comic_info(meta).encode("utf-8")

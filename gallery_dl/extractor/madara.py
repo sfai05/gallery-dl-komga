@@ -17,17 +17,94 @@ import re
 _CHAPTER_RE = re.compile(r"chapter-(\d+)(?:-(\d+))?", re.I)
 # Lazy-loaded image attributes in priority order
 _IMG_ATTRS = ("data-src", "data-lazy-src", "data-cfsrc", "src")
+# WordPress human_time_diff() output, e.g. "13 hours ago", "1 day ago"
+_RELATIVE_DATE_RE = re.compile(
+    r"(\d+|an?|few)\s+(second|minute|hour|day|week|month|year)s?\s+ago",
+    re.I,
+)
+_RELATIVE_UNIT_SECONDS = {
+    "second": 1,
+    "minute": 60,
+    "hour": 3600,
+    "day": 86400,
+    "week": 604800,
+    "month": 2592000,
+    "year": 31536000,
+}
+
+
+_ABSOLUTE_DATE_FORMATS = (
+    "%B %d, %Y",          # May 24, 2026
+    "%b %d, %Y",          # May 24, 2026 (short month)
+    "%d %B %Y",           # 24 May 2026
+    "%d %b %Y",           # 24 May 2026 (short month)
+    "%Y-%m-%dT%H:%M:%S",  # 2026-05-24T10:00:00
+    "%Y-%m-%d %H:%M:%S",  # 2026-05-24 10:00:00
+    "%Y-%m-%d",           # 2026-05-24
+    "%d/%m/%Y",           # 24/05/2026
+    "%m/%d/%Y",           # 05/24/2026 (US — only matches if first part > 12)
+)
 
 
 def _parse_date(value):
-    """Parse a Madara chapter-release-date ("May 24, 2026") to an ISO datetime
-    string, or None for relative dates ("13 hours ago")."""
-    value = value.strip()
-    for fmt in ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d"):
+    """Parse a chapter-release-date string to a datetime.
+
+    Accepts absolute forms (`May 24, 2026`, `2026-05-24`, ISO timestamps),
+    WordPress relative forms (`13 hours ago`, `1 day ago`, `yesterday`,
+    `today`, `just now`), and HTML `<time datetime="...">` attribute values.
+    Returns None when the input cannot be matched.
+
+    Re-used by non-Madara extractors (`mgeko`, `mgreadio`, ...) — keep the
+    accepted input set tolerant."""
+    value = value.strip().rstrip("Z").rstrip("+0000")
+    for fmt in _ABSOLUTE_DATE_FORMATS:
         try:
             return datetime.datetime.strptime(value, fmt)
         except ValueError:
             pass
+    lower = value.lower()
+    now = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+    if lower == "today" or lower == "just now":
+        return now
+    if lower == "yesterday":
+        return now - datetime.timedelta(days=1)
+    match = _RELATIVE_DATE_RE.search(lower)
+    if match:
+        amount_str, unit = match.group(1), match.group(2)
+        amount = int(amount_str) if amount_str.isdigit() else 1
+        return now - datetime.timedelta(
+            seconds=amount * _RELATIVE_UNIT_SECONDS[unit])
+    return None
+
+
+_DATETIME_ATTR_RE = re.compile(r'datetime\s*=\s*["\']([^"\']+)["\']', re.I)
+_TITLE_DATE_RE = re.compile(r'title\s*=\s*["\']([^"\']+)["\']', re.I)
+_INLINE_DATE_RE = re.compile(
+    r">\s*([A-Za-z]+ \d{1,2}, \d{4}|\d{4}-\d{2}-\d{2}|"
+    r"(?:\d+|an?|few)\s+(?:second|minute|hour|day|week|month|year)s?\s+ago|"
+    r"yesterday|today|just now)\s*<",
+    re.I,
+)
+
+
+def _extract_date_near(html_window):
+    """Scan an HTML fragment for the first plausible release-date string.
+
+    Looks at (in order): `<time datetime="...">`, `title="..."` attributes,
+    inline text matching absolute or relative date forms. Returns a parsed
+    datetime or None. Designed for chapter-listing-row HTML where the date
+    sits either as an attribute or in a sibling `<span>`/`<em>`/`<time>`."""
+    if not html_window:
+        return None
+    for regex in (_DATETIME_ATTR_RE, _TITLE_DATE_RE):
+        match = regex.search(html_window)
+        if match:
+            parsed = _parse_date(match.group(1))
+            if parsed is not None:
+                return parsed
+    match = _INLINE_DATE_RE.search(html_window)
+    if match:
+        return _parse_date(match.group(1))
     return None
 
 

@@ -9,6 +9,7 @@
 """Extractors for https://www.mgeko.cc/"""
 
 from .common import Extractor, Message
+from .madara import _extract_date_near
 from .. import text
 import re
 
@@ -53,17 +54,21 @@ class MgekoExtractor(Extractor):
             ).text
         chapters = []
         seen = set()
-        for m in re.finditer(
-            r'href="((?:https?://[^"]+)?/reader/en/[^"]+-chapter-[^"]+-eng-li/?)"',
-            page,
-        ):
+        href_re = re.compile(
+            r'href="((?:https?://[^"]+)?/reader/en/[^"]+-chapter-[^"]+-eng-li/?)"'
+        )
+        matches = list(href_re.finditer(page))
+        for idx, m in enumerate(matches):
             chapter_url = m.group(1)
             if chapter_url.startswith("/"):
                 chapter_url = self.root + chapter_url
             if chapter_url in seen:
                 continue
             seen.add(chapter_url)
-            chapters.append((chapter_url, ""))
+            window_start = m.end()
+            window_end = matches[idx + 1].start() if idx + 1 < len(matches) else min(window_start + 600, len(page))
+            chapter_date = _extract_date_near(page[window_start:window_end])
+            chapters.append((chapter_url, "", chapter_date))
         return chapters
 
     PAGE_IMG_RE = re.compile(
@@ -116,6 +121,7 @@ class MgekoChapterExtractor(MgekoExtractor):
             "chapter_id"   : self._chapter_slug,
             "chapter_url"  : self.url,
             "volume"       : 0,
+            "date"         : None,
         }
         images = self._chapter_images(self.url)
         yield Message.Directory, "", data
@@ -138,7 +144,7 @@ class MgekoMangaExtractor(MgekoExtractor):
         manga_info = self._manga_info(manga_url)
         chapters = self._chapter_list(self._manga_slug)
 
-        for chapter_url, chapter_title in reversed(chapters):
+        for chapter_url, chapter_title, chapter_date in reversed(chapters):
             slug = chapter_url.rstrip("/").rsplit("/", 1)[-1]
             match = _CHAPTER_RE.search(slug)
             chapter = int(match.group(1)) if match else 0
@@ -151,6 +157,7 @@ class MgekoMangaExtractor(MgekoExtractor):
                 "chapter_title": chapter_title,
                 "chapter_url"  : chapter_url,
                 "volume"       : 0,
+                "date"         : chapter_date,
                 "_extractor"   : MgekoChapterExtractor,
             }
             yield Message.Queue, chapter_url, data

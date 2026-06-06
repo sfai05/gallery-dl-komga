@@ -37,7 +37,9 @@ class ZipPP(PostProcessor):
 
         self.zfile = None
         self.path = job.pathfmt.realdirectory[:-1]
-        self.args = (self.path + ext, "a",
+        self.final_path = self.path + ext
+        self.tmp_path = self.final_path + ".part"
+        self.args = (self.tmp_path, "a",
                      self.COMPRESSION_ALGORITHMS[algorithm], True)
 
         job.register_hooks({
@@ -50,7 +52,7 @@ class ZipPP(PostProcessor):
         try:
             return zipfile.ZipFile(*self.args)
         except FileNotFoundError:
-            os.makedirs(os.path.dirname(self.path))
+            os.makedirs(os.path.dirname(self.tmp_path))
             return zipfile.ZipFile(*self.args)
 
     def write(self, pathfmt, zfile):
@@ -96,8 +98,18 @@ class ZipPP(PostProcessor):
             util.remove_directory(self.path)
 
             if self.zfile and not self.zfile.NameToInfo:
-                # remove empty zip archive
-                util.remove_file(self.zfile.filename)
+                util.remove_file(self.tmp_path)
+                return
+
+        if os.path.isfile(self.tmp_path):
+            try:
+                with zipfile.ZipFile(self.tmp_path, "r") as verify:
+                    if verify.namelist():
+                        os.replace(self.tmp_path, self.final_path)
+            except (zipfile.BadZipFile, OSError) as exc:
+                self.log.warning(
+                    "Keeping %s for resume after verify failure: %s",
+                    self.tmp_path, exc)
 
 
 __postprocessor__ = ZipPP
