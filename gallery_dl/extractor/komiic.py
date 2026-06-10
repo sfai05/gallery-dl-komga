@@ -12,7 +12,7 @@ from .common import ChapterExtractor, MangaExtractor
 from .. import text
 
 BASE_PATTERN = r"(?:https?://)?komiic\.com"
-_API = "https://komiic.com/api/query"
+_API        = "https://komiic.com/api/query"
 
 _GQL_COMIC = """
 query comicById($comicId: ID!) {
@@ -76,11 +76,15 @@ class KomiicBase():
         return data["chaptersByComicId"]
 
     def _chapter_images(self, comic_id, chapter_id):
-        data = self._gql("imagesByChapterId", _GQL_IMAGES, {"chapterId": chapter_id})
+        data   = self._gql("imagesByChapterId", _GQL_IMAGES, {"chapterId": chapter_id})
         images = data["imagesByChapterId"]
-        base = (f"https://komiic.com/api/image/"
-                f"{{kid}}?mangaId={comic_id}&chapterId={chapter_id}")
-        return [base.format(kid=img["kid"]) for img in images]
+        hdrs   = {"Referer": "https://komiic.com/"}
+        return [
+            (f"https://komiic.com/api/image/{img['kid']}"
+             f"?mangaId={comic_id}&chapterId={chapter_id}",
+             {"_http_headers": hdrs})
+            for img in images
+        ]
 
 
 class KomiicChapterExtractor(KomiicBase, ChapterExtractor):
@@ -107,8 +111,7 @@ class KomiicChapterExtractor(KomiicBase, ChapterExtractor):
 
     def images(self, page):
         del page
-        return [(url, None)
-                for url in self._chapter_images(self._comic_id, self._chapter_id)]
+        return self._chapter_images(self._comic_id, self._chapter_id)
 
 
 class KomiicMangaExtractor(KomiicBase, MangaExtractor):

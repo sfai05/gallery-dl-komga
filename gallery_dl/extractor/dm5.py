@@ -12,7 +12,7 @@ from .common import ChapterExtractor, MangaExtractor
 from .. import text
 import re as _re
 
-BASE_PATTERN = r"(?:https?://)?(?:www\.)?dm5\.com"
+BASE_PATTERN = r"(?:https?://)?(?:www\.)?dm5\.(?:com|cn)"
 _BASE_URL    = "https://www.dm5.com"
 _HEADERS     = {
     "User-Agent"     : "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36",
