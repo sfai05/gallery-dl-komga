@@ -107,6 +107,10 @@ def build_setuptools():
             "requests>=2.11.0",
         ],
         extras_require={
+            "manga": [
+                "cryptography",  # CopyManga AES-128-CBC decryption
+                "Pillow",        # GigaViewer image unscrambling
+            ],
             "video": [
                 "yt-dlp",
             ],

@@ -48,7 +48,8 @@ class RawkumaChapterExtractor(RawkumaBase, ChapterExtractor):
 
     def images(self, page):
         return [(url, None) for url in text.extract_iter(
-                page, "<img src='", "'")]
+                page, '<img src="', '"')
+                if "wp-content/uploads/src/" in url]
 
 
 class RawkumaMangaExtractor(RawkumaBase, MangaExtractor):
@@ -92,7 +93,7 @@ class RawkumaMangaExtractor(RawkumaBase, MangaExtractor):
                 "manga"        : manga,
                 "manga_id"     : manga_id,
                 "chapter"      : text.parse_int(chapter),
-                "chapter-minor": sep + minor,
+                "chapter_minor": sep + minor,
                 "chapter_id"   : text.parse_int(chapter_id),
             }))
         return results

@@ -72,7 +72,10 @@ class KomgaPP(PostProcessor):
         category = self._extractor.category
         if category == "mangadex":
             return
-        raw = "{}{}".format(meta["chapter"], meta["chapter_minor"])
+        ch = meta.get("chapter")
+        if ch is None:
+            return
+        raw = "{}{}".format(ch, meta.get("chapter_minor", ""))
         key = raw.strip()
         for sep in (",", "-", "_", " "):
             key = key.replace(sep, ".")
@@ -185,7 +188,9 @@ class KomgaPP(PostProcessor):
         if all_tags:
             tag("Genre", ", ".join(all_tags))
 
-        chapter_url = meta.get("chapter_url")
+        chapter_url = (meta.get("chapter_url")
+                       or meta.get("gallery_url")
+                       or meta.get("page_url"))
         if chapter_url:
             tag("Web", chapter_url)
         elif meta.get("chapter_id") and category == "mangadex":
