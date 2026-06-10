@@ -12,6 +12,17 @@ from .common import ChapterExtractor, MangaExtractor
 from .. import text
 import re as _re
 
+
+def _parse_chapter_str(s):
+    """Extract (chapter, chapter_minor) from a free-form Chinese chapter label.
+
+    '第001话' → (1, ''),  '第1.5话' → (1, '.5'),  '番外' → (0, '')
+    """
+    m = _re.search(r'(\d+)(?:\.(\d+))?', str(s))
+    if m:
+        return int(m.group(1)), (f".{m.group(2)}" if m.group(2) else "")
+    return 0, ""
+
 BASE_PATTERN = r"(?:https?://)?(?:www\.)?dm5\.(?:com|cn)"
 _BASE_URL    = "https://www.dm5.com"
 _HEADERS     = {
@@ -26,10 +37,11 @@ class Dm5Base():
 
     def _unpack_js(self, js):
         """Decode Dean Edwards p,a,c,k,e,r packed JavaScript."""
-        m = _re.search(r"\('([^']+)',(\d+),(\d+),'([^']+)'", js)
+        # Use (?:[^'\\]|\\.)* so escaped \' inside the packed string doesn't break the match
+        m = _re.search(r"\('((?:[^'\\]|\\.)*)',(\d+),(\d+),'([^']+)'", js)
         if not m:
             return js
-        p, a, c = m.group(1), int(m.group(2)), int(m.group(3))
+        p, a, c = m.group(1).replace("\\'", "'"), int(m.group(2)), int(m.group(3))
         k = m.group(4).split("|")
         chars = "0123456789abcdefghijklmnopqrstuvwxyz"
 
@@ -50,18 +62,37 @@ class Dm5Base():
         images = []
         page = 1
         while len(images) < count:
+            prev_len = len(images)
             api_url = (
                 f"{chapter_url}chapterfun.ashx"
                 f"?cid={cid}&page={page}&key=&language=1&gtk=6"
                 f"&_cid={cid}&_mid={mid}&_dt={dt}&_sign={sign}"
             )
             js      = self.request(api_url, headers=hdrs).text
-            urls    = _re.findall(r'"(https://[^"]+)"', self._unpack_js(js))
+            unpacked = self._unpack_js(js)
             img_hdrs = {"Referer": f"{_BASE_URL}/m{cid}/"}
-            for url in urls:
-                images.append((url, {"_http_headers": img_hdrs}))
-                if len(images) >= count:
-                    break
+
+            # New API format: pix (CDN base URL) + pvalue (relative image paths)
+            pix_m = _re.search(r'var\s+pix\s*=\s*"(https://[^"]+)"', unpacked)
+            pvalue_items = _re.findall(r'"(/[^"]+\.(?:jpg|png|webp|gif))"', unpacked)
+            key_m = _re.search(r"var\s+key\s*=\s*['\"]([^'\"]+)['\"]", unpacked)
+            if pix_m and pvalue_items:
+                pix = pix_m.group(1).rstrip("/")
+                key = key_m.group(1) if key_m else ""
+                for path in pvalue_items:
+                    url = f"{pix}/{path.lstrip('/')}?cid={cid}&key={key}"
+                    images.append((url, {"_http_headers": img_hdrs}))
+                    if len(images) >= count:
+                        break
+            else:
+                # Fallback: old format with full https image URLs in the unpacked JS
+                for url in _re.findall(r'"(https://[^"]+\.(?:jpg|png|webp|gif)[^"]*)"', unpacked):
+                    images.append((url, {"_http_headers": img_hdrs}))
+                    if len(images) >= count:
+                        break
+
+            if len(images) == prev_len:
+                break  # no progress — API not returning parseable image URLs
             page += 2
         return images
 
@@ -99,11 +130,14 @@ class Dm5ChapterExtractor(Dm5Base, ChapterExtractor):
                 r"<title>([^_<]+)", page) else "")
             chapter_string = ctitle
 
+        chapter, chapter_minor = _parse_chapter_str(chapter_string)
         return {
             "manga"         : manga,
             "manga_id"      : self._mid,
             "chapter_string": chapter_string,
             "chapter_id"    : self._cid,
+            "chapter"       : chapter,
+            "chapter_minor" : chapter_minor,
             "lang"          : "zh",
             "language"      : "Chinese",
         }
@@ -141,11 +175,14 @@ class Dm5MangaExtractor(Dm5Base, MangaExtractor):
             ):
                 href, cid, title = a_m.group(1), a_m.group(2), a_m.group(3).strip()
                 url = _BASE_URL + href
+                chapter, chapter_minor = _parse_chapter_str(title)
                 result.append((url, {
                     "manga"         : manga,
                     "manga_id"      : manga_id,
                     "chapter_string": title,
                     "chapter_id"    : cid,
+                    "chapter"       : chapter,
+                    "chapter_minor" : chapter_minor,
                     "lang"          : "zh",
                     "language"      : "Chinese",
                 }))
