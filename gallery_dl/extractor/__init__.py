@@ -145,6 +145,7 @@ modules = [
     "manhuaplus",
     "mangoxo",
     "mgeko",
+    "mgreadio",
     "misskey",
     "mixdrop",
     "motherless",
