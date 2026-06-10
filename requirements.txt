@@ -1,1 +1,7 @@
 requests>=2.11.0
+
+# Required for CopyManga extractor (AES-128-CBC chapter/image decryption)
+cryptography
+
+# Required for GigaViewer image unscrambling postprocessor (gigaviewer_unscramble)
+Pillow
