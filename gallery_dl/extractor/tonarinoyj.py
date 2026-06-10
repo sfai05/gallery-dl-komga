@@ -13,6 +13,17 @@ import json
 import html as _html
 import re as _re
 
+
+def _parse_chapter_str(s):
+    """Extract (chapter, chapter_minor) from a TonariyYJ episode title.
+
+    '第1話' → (1, ''),  '第1.5話' → (1, '.5'),  free-form title → (0, '')
+    """
+    m = _re.search(r'(\d+)(?:\.(\d+))?', str(s))
+    if m:
+        return int(m.group(1)), (f".{m.group(2)}" if m.group(2) else "")
+    return 0, ""
+
 BASE_PATTERN = r"(?:https?://)?tonarinoyj\.jp"
 _API_CHAPTERS = "https://tonarinoyj.jp/api/viewer/pagination_readable_products"
 
@@ -74,7 +85,7 @@ class TonariyyjBase():
         return episodes
 
 
-class TonariyyjChapterExtractor(TonariyyjBase, ChapterExtractor):
+class TonarinoyjChapterExtractor(TonariyyjBase, ChapterExtractor):
     """Extractor for a single Tonari no Young Jump episode"""
     directory_fmt = ("{category}", "{manga}", "{chapter_string}")
     filename_fmt  = "{page:>03}.{extension}"
@@ -95,11 +106,15 @@ class TonariyyjChapterExtractor(TonariyyjBase, ChapterExtractor):
 
         self._page_structure = product["pageStructure"]
 
+        title   = product.get("title", episode_id)
+        chapter, chapter_minor = _parse_chapter_str(title)
         return {
-            "manga"         : series.get("title") or product.get("title", episode_id),
+            "manga"         : series.get("title") or title,
             "manga_id"      : series.get("id", ""),
-            "chapter_string": product.get("title", episode_id),
+            "chapter_string": title,
             "chapter_id"    : episode_id,
+            "chapter"       : chapter,
+            "chapter_minor" : chapter_minor,
             "lang"          : "ja",
             "language"      : "Japanese",
         }
@@ -109,7 +124,7 @@ class TonariyyjChapterExtractor(TonariyyjBase, ChapterExtractor):
         return self._episode_images(self._page_structure)
 
 
-class TonariyyjMangaExtractor(TonariyyjBase, MangaExtractor):
+class TonarinoyjMangaExtractor(TonariyyjBase, MangaExtractor):
     """Extractor for all free episodes of a Tonari no Young Jump series.
 
     Use the RSS series URL — findable on any episode page in the browser's
@@ -118,7 +133,7 @@ class TonariyyjMangaExtractor(TonariyyjBase, MangaExtractor):
 
     Usage: gallery-dl "https://tonarinoyj.jp/rss/series/<series_id>"
     """
-    chapterclass = TonariyyjChapterExtractor
+    chapterclass = TonarinoyjChapterExtractor
     pattern      = BASE_PATTERN + r"/(?:rss|atom)/series/(\d+)"
     example      = "https://tonarinoyj.jp/rss/series/12207421983555296753"
 
@@ -149,9 +164,13 @@ class TonariyyjMangaExtractor(TonariyyjBase, MangaExtractor):
             viewer_uri = ep.get("viewer_uri", "")
             if not viewer_uri:
                 continue
+            ep_title = ep.get("title", "")
+            chapter, chapter_minor = _parse_chapter_str(ep_title)
             result.append((viewer_uri, {
                 **manga_meta,
-                "chapter_string": ep.get("title", ""),
+                "chapter_string": ep_title,
                 "chapter_id"    : viewer_uri.rstrip("/").rsplit("/", 1)[-1],
+                "chapter"       : chapter,
+                "chapter_minor" : chapter_minor,
             }))
         return result
