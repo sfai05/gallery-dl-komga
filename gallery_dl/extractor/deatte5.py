@@ -37,7 +37,7 @@ class Deatte5Extractor(MangaclashExtractor):
 
 class Deatte5ChapterExtractor(Deatte5Extractor, MadaraChapterExtractor):
     pattern = BASE_PATTERN + r"/manga/([a-z0-9-]+?)-(chapter-\d+(?:-\d+)?)/?"
-    example = "https://www.deatte5.com/manga/MANGA-chapter-1/"
+    example = "https://www.deatte5.com/manga/manga-chapter-1/"
 
     def items(self):
         manga_slug = self._manga_slug
