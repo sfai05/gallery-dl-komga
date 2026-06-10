@@ -6,14 +6,54 @@
 # it under the terms of the GNU General Public License version 2 as
 # published by the Free Software Foundation.
 
-"""Extractors for https://www.mangacopy.com/ (CopyManga / 拷貝漫畫)"""
+"""Extractors for https://www.mangacopy.com/ (CopyManga / 拷貝漫畫)
+
+No account required.  Content is fetched from the public web pages; the
+chapter-list and page-list payloads are AES-128-CBC encrypted with keys
+embedded in the surrounding HTML (var ccx / var ccy).
+
+Requires the 'cryptography' package::
+
+    pip install cryptography
+"""
 
 from .common import ChapterExtractor, MangaExtractor
-from .. import exception
+import binascii
+import json as _json
+import re as _re
 
-# CopyManga operates across several front-end domains; the back-end API
-# lives at api.mangacopy.com.  Older copymanga.* domains have been largely
-# taken over by ad networks — do NOT derive the API root from the input URL.
+
+def _parse_chapter_str(s):
+    m = _re.search(r'(\d+)(?:\.(\d+))?', str(s))
+    if m:
+        return int(m.group(1)), (f".{m.group(2)}" if m.group(2) else "")
+    return 0, ""
+
+
+def _decrypt(encrypted_text, key):
+    """AES-128-CBC decrypt a CopyManga payload.
+
+    Wire format: <16 ASCII bytes = raw IV> <hex-encoded ciphertext>
+    The key is extracted from the page HTML and is exactly 16 ASCII chars.
+    """
+    try:
+        from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
+    except ImportError:
+        raise ImportError(
+            "CopyManga extractor requires the 'cryptography' package: "
+            "pip install cryptography"
+        )
+    data       = encrypted_text.encode("latin-1")
+    iv         = data[:16]
+    ciphertext = binascii.unhexlify(data[16:])
+    key_bytes  = key.encode("latin-1")[:16]
+    cipher     = Cipher(algorithms.AES(key_bytes), modes.CBC(iv))
+    dec        = cipher.decryptor()
+    padded     = dec.update(ciphertext) + dec.finalize()
+    pad_len    = padded[-1]
+    return padded[:-pad_len].decode("utf-8").replace("\x00", "")
+
+
 _DOMAIN_PAT = (
     r"(?:www\.)?"
     r"(?:copymanga\.(?:site|tv|com|org|info|net)"
@@ -23,153 +63,139 @@ _DOMAIN_PAT = (
 )
 BASE_PATTERN = r"(?:https?://)?" + _DOMAIN_PAT
 
-_API_ROOT = "https://api.mangacopy.com/api/v3"
+_WWW_ROOT = "https://www.2026copy.com"
 
 _HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/136.0.0.0 Safari/537.36"
+        "Chrome/135.0.0.0 Safari/537.36"
     ),
-    "use_oversea_cdn": "1",
-    "use_webp"       : "1",
-    "platform"       : "3",
 }
 
 
 class CopyMangaBase():
-    """Base class for CopyManga extractors.
-
-    Requires a registered CopyManga account.  Provide credentials via
-    gallery-dl config::
-
-        {"extractor": {"copymanga": {"username": "you@email.com",
-                                     "password": "yourpassword"}}}
-
-    Or supply a pre-obtained bearer token::
-
-        {"extractor": {"copymanga": {"token": "your-token-here"}}}
-    """
-
+    """Base class for CopyManga extractors (unauthenticated web + AES decrypt)."""
     category = "copymanga"
-    root     = "https://www.mangacopy.com"
+    root     = _WWW_ROOT
 
-    def initialize(self):
-        super().initialize()
-        token    = self.config("token")
-        username = self.config("username")
-        password = self.config("password")
-        if token:
-            _HEADERS["authorization"] = f"Bearer {token}"
-        elif username and password:
-            tok = self._login(username, password)
-            if tok:
-                _HEADERS["authorization"] = f"Bearer {tok}"
-            else:
-                raise exception.AuthenticationError(
-                    "CopyManga login failed — check credentials or wait for IP block to lift."
-                )
-        else:
-            raise exception.AuthenticationError(
-                "No CopyManga credentials configured. "
-                "Set extractor.copymanga.username/password or .token."
-            )
+    def _manga_page(self, path_word):
+        return self.request(
+            f"{_WWW_ROOT}/comic/{path_word}", headers=_HEADERS
+        ).text
 
-    def _login(self, username, password):
-        import base64, random
-        salt       = random.randint(100000, 999999)
-        encoded_pw = base64.b64encode(f"{password}-{salt}".encode()).decode()
-        url        = "https://api.mangacopy.com/api/kb/web/login"
-        login_hdrs = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0"
-            ),
-        }
-        data = self.request(
-            url, method="POST", headers=login_hdrs,
-            data={"username": username, "password": encoded_pw, "salt": salt},
-        ).json()
-        if data.get("code") == 200:
-            self.log.debug("CopyManga login successful")
-            return data.get("results", {}).get("token")
-        self.log.warning("CopyManga login failed: %s", data.get("message", ""))
-        return None
+    def _extract_key(self, page):
+        # Variable name changes across site versions (ccx, ccz, cct, …).
+        # Match any single-letter variant; the value is always ≤32 ASCII chars.
+        m = _re.search(r"var cc[a-z]\s*=\s*'([^']{1,32})'", page)
+        if not m:
+            raise Exception("CopyManga: AES key variable (var ccX) not found in page")
+        return m.group(1)
 
-    def _api(self, url):
-        data = self.request(url, headers=_HEADERS).json()
-        code = data.get("code")
-        if code == 210:
-            raise exception.AuthenticationError(
-                f"CopyManga blocked (code 210): {data.get('message', 'IP block or upgrade required')}"
-            )
-        if data.get("results") is None:
-            raise exception.AuthenticationError(
-                f"CopyManga returned null results (partial IP block): "
-                f"code={code} message={data.get('message', '')}"
-            )
-        return data
+    def _manga_info(self, path_word, page):
+        # Primary: <h6 title="..."> inside comicParticulars-title-right
+        t = _re.search(
+            r'comicParticulars-title-right.*?<h6[^>]+title="([^"]+)"',
+            page, _re.DOTALL,
+        )
+        title = t.group(1).strip() if t else ""
+        if not title:
+            # Fallback: og:title meta tag
+            t = _re.search(r'property="og:title"\s+content="([^"]+)"', page)
+            if t:
+                title = t.group(1)
+                for suffix in (" - 拷贝漫画", " - 拷貝漫畫", " - Copy漫畫", " - 拷漫"):
+                    if suffix in title:
+                        title = title.split(suffix, 1)[0].strip()
+                        break
 
-    def _manga_info(self, path_word):
-        data  = self._api(f"{_API_ROOT}/comic2/{path_word}?in_mainland=false")
-        comic = data["results"]["comic"]
+        if not title:
+            title = path_word
+
+        cover_m = _re.search(r'property="og:image"\s+content="([^"]+)"', page)
+        cover   = cover_m.group(1) if cover_m else ""
+
+        authors = _re.findall(r'href="/author/[^"]+"\s*>([^<]+)<', page)
+        if not authors:
+            authors = _re.findall(r'"author"\s*:\s*"([^"]+)"', page)
+
         return {
-            "manga"      : comic.get("name", path_word),
-            "manga_id"   : path_word,
-            "author"     : [a["name"] for a in comic.get("author", [])],
-            "tags"       : [t["name"] for t in comic.get("theme", [])],
-            "description": comic.get("brief", ""),
-            "status"     : comic.get("status", {}).get("display", ""),
-            "cover"      : comic.get("cover", ""),
-            "lang"       : "zh",
-            "language"   : "Chinese",
+            "manga"    : title or path_word,
+            "manga_id" : path_word,
+            "author"   : [a.strip() for a in authors if a.strip()],
+            "cover"    : cover,
+            "lang"     : "zh",
+            "language" : "Chinese",
         }
 
-    def _chapter_list(self, path_word, group="default"):
+    def _chapter_list(self, path_word, ccx_key):
+        """Fetch + decrypt the chapter list; return a flat list of chapter dicts.
+
+        The endpoint requires a Referer pointing to the manga page to return
+        the full chapter payload (without it the server returns an empty stub).
+        Groups are at the top level of the decrypted JSON on current site versions.
+        """
+        url  = f"{_WWW_ROOT}/comicdetail/{path_word}/chapters"
+        hdrs = {**_HEADERS, "Referer": f"{_WWW_ROOT}/comic/{path_word}", "dnts": "3"}
+        data = self.request(url, headers=hdrs).json()
+        enc  = data.get("results")
+        if not enc or not isinstance(enc, str):
+            return []
+        obj = _json.loads(_decrypt(enc, ccx_key))
+        # Full response: groups at top level; empty stub: groups inside build{}
+        groups = obj.get("groups") or obj.get("build", {}).get("groups", {})
+        group  = self.config("group") or "default"
+        if group in groups:
+            return groups[group].get("chapters", [])
         chapters = []
-        offset   = 0
-        limit    = 500
-        while True:
-            url    = (f"{_API_ROOT}/comic/{path_word}"
-                      f"/group/{group}/chapters"
-                      f"?limit={limit}&offset={offset}&platform=3&in_mainland=false")
-            data   = self._api(url)
-            result = data["results"]
-            chapters.extend(result["list"])
-            if offset + limit >= result["total"]:
-                break
-            offset += limit
+        for gdata in groups.values():
+            chapters.extend(gdata.get("chapters", []))
         return chapters
 
     def _chapter_images(self, path_word, chapter_uuid):
-        data = self._api(
-            f"{_API_ROOT}/comic/{path_word}/chapter2/{chapter_uuid}?in_mainland=false"
-        )
-        return [item["url"] for item in data["results"]["chapter"]["contents"]]
+        """Fetch the chapter page, extract cct key + contentKey, decrypt image list."""
+        url  = f"{_WWW_ROOT}/comic/{path_word}/chapter/{chapter_uuid}"
+        page = self.request(url, headers=_HEADERS).text
+        key  = self._extract_key(page)
+        # contentKey is a JS variable (not an HTML attribute) on current site versions
+        m    = (_re.search(r"var contentKey\s*=\s*'([^']+)'", page)
+                or _re.search(r'contentKey="([^"]+)"', page))
+        if not m:
+            raise Exception("CopyManga: contentKey not found in chapter page")
+        images = _json.loads(_decrypt(m.group(1), key))
+        if isinstance(images, list):
+            return [img["url"] for img in images if img.get("url")]
+        return []
 
 
-class CopyMangaChapterExtractor(CopyMangaBase, ChapterExtractor):
+class CopymangaChapterExtractor(CopyMangaBase, ChapterExtractor):
     """Extractor for a single CopyManga chapter"""
     directory_fmt = ("{category}", "{manga}", "{chapter_string}")
     filename_fmt  = "{page:>03}.{extension}"
     archive_fmt   = "{manga_id}_{chapter_id}_{page}"
     pattern       = BASE_PATTERN + r"/comic/([\w-]+)/chapter/([\w-]+)"
-    example       = "https://www.mangacopy.com/comic/MANGA/chapter/UUID"
+    example       = "https://www.2026copy.com/comic/MANGA/chapter/UUID"
 
     def metadata(self, page):
         path_word, chapter_uuid = self.groups
-        manga          = self._manga_info(path_word)
-        group          = self.config("group") or "default"
+        manga_page     = self._manga_page(path_word)
+        ccx_key        = self._extract_key(manga_page)
+        manga          = self._manga_info(path_word, manga_page)
         chapter_string = chapter_uuid
-        for ch in self._chapter_list(path_word, group):
-            if ch["uuid"] == chapter_uuid:
-                chapter_string = ch["name"]
+        for ch in self._chapter_list(path_word, ccx_key):
+            if ch.get("id") == chapter_uuid:
+                chapter_string = ch.get("name", chapter_uuid)
                 break
+        chapter, chapter_minor = _parse_chapter_str(chapter_string)
         self._path_word    = path_word
         self._chapter_uuid = chapter_uuid
-        return {**manga, "chapter_string": chapter_string,
-                "chapter_id": chapter_uuid}
+        return {
+            **manga,
+            "chapter_string": chapter_string,
+            "chapter_id"    : chapter_uuid,
+            "chapter"       : chapter,
+            "chapter_minor" : chapter_minor,
+        }
 
     def images(self, page):
         del page
@@ -177,22 +203,30 @@ class CopyMangaChapterExtractor(CopyMangaBase, ChapterExtractor):
                 for url in self._chapter_images(self._path_word, self._chapter_uuid)]
 
 
-class CopyMangaMangaExtractor(CopyMangaBase, MangaExtractor):
+class CopymangaMangaExtractor(CopyMangaBase, MangaExtractor):
     """Extractor for all chapters of a CopyManga series"""
-    chapterclass = CopyMangaChapterExtractor
+    chapterclass = CopymangaChapterExtractor
     pattern      = BASE_PATTERN + r"/comic/([\w-]+)/?(?:[?#].*)?$"
-    example      = "https://www.mangacopy.com/comic/MANGA"
+    example      = "https://www.2026copy.com/comic/MANGA"
+
+    def initialize(self):
+        super().initialize()
+        self.page_url = f"{_WWW_ROOT}/comic/{self.groups[0]}"
 
     def chapters(self, page):
         path_word, = self.groups
-        manga  = self._manga_info(path_word)
-        group  = self.config("group") or "default"
-        result = []
-        for ch in self._chapter_list(path_word, group):
-            url = f"{self.root}/comic/{path_word}/chapter/{ch['uuid']}"
-            result.append((url, {
+        ccx_key = self._extract_key(page)
+        manga   = self._manga_info(path_word, page)
+        result  = []
+        for ch in self._chapter_list(path_word, ccx_key):
+            uuid = ch.get("id", "")
+            name = ch.get("name", uuid)
+            chapter, chapter_minor = _parse_chapter_str(name)
+            result.append((f"{self.root}/comic/{path_word}/chapter/{uuid}", {
                 **manga,
-                "chapter_string": ch["name"],
-                "chapter_id"    : ch["uuid"],
+                "chapter_string": name,
+                "chapter_id"    : uuid,
+                "chapter"       : chapter,
+                "chapter_minor" : chapter_minor,
             }))
         return result
