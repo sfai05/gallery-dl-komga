@@ -52,14 +52,15 @@ class GigaviewerUnscramblePP(PostProcessor):
                 "Pillow is not installed — cannot unscramble GigaViewer images. "
                 "Install it with: pip install Pillow"
             )
-        job.register_hooks({"after": self.run}, options)
+        job.register_hooks({"file": self.run}, options)
 
     def run(self, pathfmt):
         if not pathfmt.kwdict.get("_scrambled"):
             return
         if not _HAS_PIL:
             return
-        path = pathfmt.temppath or pathfmt.path
+        path = pathfmt.temppath
+        self.log.debug("gigaviewer_unscramble: unscrambling '%s'", path)
         try:
             _unscramble(path)
         except Exception as exc:
