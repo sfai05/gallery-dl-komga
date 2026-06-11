@@ -24,6 +24,7 @@ def _parse_chapter_str(s):
         return int(m.group(1)), (f".{m.group(2)}" if m.group(2) else "")
     return 0, ""
 
+
 BASE_PATTERN = r"(?:https?://)?tonarinoyj\.jp"
 _API_CHAPTERS = "https://tonarinoyj.jp/api/viewer/pagination_readable_products"
 
@@ -75,8 +76,8 @@ class TonariyyjBase():
                 }
                 batch = self.request(
                     _API_CHAPTERS,
-                    params  = params,
-                    headers = {"Referer": self.root + "/"},
+                    params=params,
+                    headers={"Referer": self.root + "/"},
                 ).json()
                 if not batch:
                     break

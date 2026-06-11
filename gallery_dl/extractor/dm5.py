@@ -23,6 +23,7 @@ def _parse_chapter_str(s):
         return int(m.group(1)), (f".{m.group(2)}" if m.group(2) else "")
     return 0, ""
 
+
 BASE_PATTERN = r"(?:https?://)?(?:www\.)?dm5\.(?:com|cn)"
 _BASE_URL    = "https://www.dm5.com"
 _HEADERS     = {

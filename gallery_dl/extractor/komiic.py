@@ -57,11 +57,11 @@ class KomiicBase():
     def _gql(self, operation, query, variables):
         resp = self.request(
             _API,
-            method  = "POST",
-            headers = {"Content-Type": "application/json"},
-            json    = {"operationName": operation,
-                       "query"        : query,
-                       "variables"    : variables},
+            method="POST",
+            headers={"Content-Type": "application/json"},
+            json={"operationName": operation,
+                  "query": query,
+                  "variables": variables},
         ).json()
         if "errors" in resp:
             for err in resp["errors"]:
